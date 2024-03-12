@@ -3,5 +3,5 @@ import { minus } from "./minus.js";
 
 const sum = add(1, 2);
 const division = minus(2, 1);
-console.log("[ sum ] >", sum);
-console.log("[ division ] >", division);
+console.log("[ add(1, 2) ] >", sum);
+console.log("[ minus(2, 1) ] >", division);
