@@ -65,7 +65,7 @@ function getModuleInfo(_path) {
    */
   function createDependencyMap(ast) {
     // 创建依赖关系图
-    const dependencyMap = {};
+    let dependencyMap = null;
 
     // 遍历抽象语法树（AST）
     traverse(ast, {
@@ -75,6 +75,8 @@ function getModuleInfo(_path) {
         const dirname = path.dirname(entry); // 获取存放主入口文件的文件名
 
         const abspath = "./" + path.join(dirname, value); // 拼接出每个导入文件的绝对路径
+
+        if (!dependencyMap) dependencyMap = {};
 
         dependencyMap[value] = abspath; // 添加到依赖关系图
       },
@@ -109,14 +111,33 @@ function getModuleInfo(_path) {
 
 const entryModuleInfo = getModuleInfo(entry);
 
+/**
+ * 加载模块
+ *
+ * @param dependencyMap 模块依赖映射表
+ * @returns 返回加载的模块数组
+ */
 function loadModules(dependencyMap) {
   const modules = [];
+
+  // 如果dependencyMap为空，则返回一个空数组
+  if (!dependencyMap) return [];
+
+  // 遍历dependencyMap的每一个key
   for (let key in dependencyMap) {
-    modules.push(getModuleInfo(dependencyMap[key]));
+    // 获取模块信息
+    const moduleInfo = getModuleInfo(dependencyMap[key]);
+    // 将模块信息添加到modules数组中
+    modules.push(moduleInfo);
+    // 如果模块信息中存在依赖，则递归加载依赖模块，并将加载的依赖模块添加到modules数组中
+    if (moduleInfo.deps) modules.push(...loadModules(moduleInfo.deps));
   }
+
+  // 返回加载的模块数组
   return modules;
 }
 
+// 加载入口模块，并递归加载依赖模块
 const allModules = [entryModuleInfo].concat(loadModules(entryModuleInfo.deps));
 
 console.log("[ allModules ] >", allModules);
