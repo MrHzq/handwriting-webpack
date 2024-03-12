@@ -3,7 +3,7 @@
  * 1. 找到主入口，即 src/index.js 文件，然后加载进来(getFileInfo(path) -> fileContent)
  * 2. 解析主入口的内容(parseFile(fileContent))，找到所有依赖，形成依赖关系(createDependencyMap(AST) -> dependencyMap)
  * 3. 在将 AST 转换成低版本的 JS 代码，(generateCode(AST))
- * 4. 基于依赖关系图，去加载对应的所有文件
+ * 4. 基于依赖关系图，去加载对应的所有文件，(loadModules(dependencyMap))
  */
 
 // 主入口路径变量，目前写死
@@ -18,10 +18,18 @@ const fs = require("fs");
 // @babel/parser 解析文件内容
 const parser = require("@babel/parser");
 
+// @babel/traverse 遍历抽象语法树（AST）
 const traverse = require("@babel/traverse").default;
 
+// @babel/generator 将 AST 转换成代码字符串
 const babelCore = require("@babel/core");
 
+/**
+ * 获取模块信息
+ *
+ * @param _path 文件路径
+ * @returns 包含文件路径、依赖关系图和生成代码的对象
+ */
 function getModuleInfo(_path) {
   /**
    * 获取文件信息
@@ -101,4 +109,14 @@ function getModuleInfo(_path) {
 
 const entryModuleInfo = getModuleInfo(entry);
 
-console.log("[ entryModuleInfo ] >", entryModuleInfo);
+function loadModules(dependencyMap) {
+  const modules = [];
+  for (let key in dependencyMap) {
+    modules.push(getModuleInfo(dependencyMap[key]));
+  }
+  return modules;
+}
+
+const allModules = [entryModuleInfo].concat(loadModules(entryModuleInfo.deps));
+
+console.log("[ allModules ] >", allModules);
