@@ -3,17 +3,19 @@
  * 1. 找到主入口，即 src/index.js 文件，然后加载进来(getFileInfo(path) -> fileContent)
  * 2. 解析主入口的内容(parseFile(fileContent))，找到所有依赖，形成依赖关系(createDependencyMap(AST) -> dependencyMap)
  * 3. 在将 AST 转换成低版本的 JS 代码，(generateCode(AST))
- * 4. 基于依赖关系图，去加载对应的所有文件，(loadModules(dependencyMap))
+ * 4. 基于依赖关系图，去加载对应的所有文件(loadModules(dependencyMap))，然后转为对象结构(createModuleMap(dependencyMap))
+ * 5. 处理上下文，注入 reqiure、exports 这两个变量的具体功能(handleContext(moduleMap))
  */
 
 // 主入口路径变量，目前写死
 const entry = "./src/index.js";
+const output = { path: "_dist", filename: "bundle.js" };
 
 // path 模块，获取文件路径
 const path = require("path");
 
 // fs 模块，读取文件内容
-const fs = require("fs");
+const fs = require("fs-extra");
 
 // @babel/parser 解析文件内容
 const parser = require("@babel/parser");
@@ -109,35 +111,149 @@ function getModuleInfo(_path) {
   return { path: _path, deps: _pathFileDepsMap, code: _pathFileCode };
 }
 
-const entryModuleInfo = getModuleInfo(entry);
-
 /**
- * 加载模块
+ * 解析模块信息
  *
- * @param dependencyMap 模块依赖映射表
- * @returns 返回加载的模块数组
+ * @param moduleInfo 模块信息
+ * @returns 返回模块路径为键，模块对象为值的映射表
  */
-function loadModules(dependencyMap) {
-  const modules = [];
+function parseModules(moduleInfo) {
+  /**
+   * 加载模块
+   *
+   * @param dependencyMap 模块依赖映射表
+   * @returns 返回加载的模块数组
+   */
+  function loadModules(dependencyMap) {
+    const modules = [];
 
-  // 如果dependencyMap为空，则返回一个空数组
-  if (!dependencyMap) return [];
+    // 如果dependencyMap为空，则返回一个空数组
+    if (!dependencyMap) return [];
 
-  // 遍历dependencyMap的每一个key
-  for (let key in dependencyMap) {
-    // 获取模块信息
-    const moduleInfo = getModuleInfo(dependencyMap[key]);
-    // 将模块信息添加到modules数组中
-    modules.push(moduleInfo);
-    // 如果模块信息中存在依赖，则递归加载依赖模块，并将加载的依赖模块添加到modules数组中
-    if (moduleInfo.deps) modules.push(...loadModules(moduleInfo.deps));
+    // 遍历dependencyMap的每一个key
+    for (let key in dependencyMap) {
+      // 获取模块信息
+      const _moduleInfo = getModuleInfo(dependencyMap[key]);
+      // 将模块信息添加到modules数组中
+      modules.push(_moduleInfo);
+      // 如果模块信息中存在依赖，则递归加载依赖模块，并将加载的依赖模块添加到modules数组中
+      if (_moduleInfo.deps) modules.push(...loadModules(_moduleInfo.deps));
+    }
+
+    // 返回加载的模块数组
+    return modules;
   }
 
-  // 返回加载的模块数组
-  return modules;
+  /**
+   * 创建模块映射表
+   *
+   * @param modules 模块数组
+   * @returns 返回模块路径为键，模块对象为值的映射表
+   */
+  function createModuleMap(modules) {
+    // 使用reduce方法遍历modules数组，并返回一个对象
+    return modules.reduce((modulesMap, module) => {
+      // 将module对象按照path属性作为键，module对象作为值存储到modulesMap对象中
+      modulesMap[module.path] = module;
+      // 返回更新后的modulesMap对象
+      return modulesMap;
+      // 初始值为一个空对象
+    }, {});
+  }
+
+  // 加载入口模块，并递归加载依赖模块
+  const modulesArray = [moduleInfo].concat(loadModules(moduleInfo.deps));
+  return createModuleMap(modulesArray);
 }
 
-// 加载入口模块，并递归加载依赖模块
-const allModules = [entryModuleInfo].concat(loadModules(entryModuleInfo.deps));
+const entryModuleInfo = getModuleInfo(entry);
 
-console.log("[ allModules ] >", allModules);
+const allModulesMap = parseModules(entryModuleInfo);
+
+/**
+ * 处理上下文，生成一个函数，该函数接受一个模块映射对象作为参数，
+ * 并返回一个立即执行函数表达式，该函数内部定义了一个 require 函数，
+ * 用于根据模块路径加载模块并执行模块代码，最后返回模块的导出对象。
+ *
+ * @param modulesMap 模块映射对象，键为模块路径，值为模块对象，
+ * 模块对象包含两个属性：deps（依赖数组）和 code（模块代码字符串）。
+ * @returns 返回一个立即执行函数表达式的字符串形式。
+ */
+function handleContext(modulesMap) {
+  const modulesMapString = JSON.stringify(modulesMap);
+  return `(function (modulesMap) {
+    function require(path) {
+      function absRequire(absPath) {
+        return require(modulesMap[path].deps[absPath]);
+      }
+
+      var exports = {};
+
+      (function (require, exports, code) {
+        eval(code);
+      })(absRequire, exports, modulesMap[path].code);
+
+      return exports;
+    }
+    require('${entry}');
+  })(${modulesMapString});`;
+}
+
+/**
+ * 创建输出文件
+ *
+ * @param _output 输出文件路径和文件名
+ * @param codeString 要写入的代码字符串
+ */
+function createOutPutFiles(_output, codeString) {
+  function createFolder(path) {
+    // 判断目录是否存在，如果存在则删除
+    const isExist = fs.existsSync(path);
+    if (isExist) fs.removeSync(path);
+
+    // 创建目录
+    fs.mkdirSync(path);
+  }
+
+  /**
+   * 创建HTML文件
+   *
+   * @param path 文件路径
+   * @param scriptSrc 脚本源路径
+   */
+  function createHTML(path, scriptSrc) {
+    const htmlName = "index.html";
+    // HTML 内容的字符串
+    const htmlContent = fs.readFileSync(htmlName, "utf-8");
+
+    // 找到合适的插入点，这里假设在 body 结束前插入
+    const insertPointPattern = /<\/body>/i;
+    const insertionPoint = htmlContent.search(insertPointPattern);
+
+    if (insertionPoint !== -1) {
+      // 创建 script 标签列表
+      const scriptTags = `<script src="./${scriptSrc}"></script>`;
+
+      // 插入 script 标签到 HTML 内容中
+      const newHtmlContent = `${htmlContent.slice(0, insertionPoint)}
+  ${scriptTags}
+${htmlContent.slice(insertionPoint)}`;
+
+      // 创建 html 文件
+      const htmlPath = path + "/" + htmlName;
+      fs.writeFileSync(htmlPath, newHtmlContent);
+    }
+  }
+
+  const { path, filename } = _output;
+  // 创建 输出目录
+  createFolder(path);
+  // 创建 bundle.js 文件
+  fs.writeFileSync(path + "/" + filename, codeString);
+  // 创建 index.html 文件
+  createHTML(path, filename);
+}
+
+// 最终生成的 bundle.js 的代码字符串
+const bundle_js_code_string = handleContext(allModulesMap);
+createOutPutFiles(output, bundle_js_code_string);

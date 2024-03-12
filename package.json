@@ -15,6 +15,7 @@
     "@babel/parser": "^7.24.0",
     "@babel/preset-env": "^7.24.0",
     "@babel/traverse": "^7.24.0",
-    "babel": "^6.23.0"
+    "babel": "^6.23.0",
+    "fs-extra": "^11.2.0"
   }
 }
