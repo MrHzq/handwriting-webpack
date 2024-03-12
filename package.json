@@ -11,6 +11,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@babel/parser": "^7.24.0"
+    "@babel/parser": "^7.24.0",
+    "@babel/traverse": "^7.24.0"
   }
 }
